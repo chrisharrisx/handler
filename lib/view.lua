@@ -16,6 +16,8 @@ function VIEW:redraw(mode, state, instruments)
     draw_edit_device(state)
   elseif mode == 2 then
     draw_edit_events(state, instruments)
+  elseif mode == 3 then
+    draw_edit_event(state, instruments)
   end
 end
 
