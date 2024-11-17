@@ -2,67 +2,125 @@
 -- v0.0.1 @chrisharrisx
 -- llllllll.co/handler
 --
--- MIDI timeline event system
+-- Event System
 --
 
-local midihub_a = midi.connect(1)
-local m8 = midi.connect(5)
-
 local timeline = include('lib/timeline')
+local state = include('lib/state')
+local instruments = include('lib/instruments')
+local view = include('lib/view')
+local events = include('lib/events')
 
-local ER = require('er')
+local tab = require('tabutil')
 
-local state = {
-  clock_div = 0.5
-}
+local HOME = 0
+local EDIT_DEVICE = 1
+local EDIT_EVENTS = 2
+local EDIT_EVENT = 3
 
 function init()
   clock.run(tick)
 end
 
 function tick()
-  local er_table = ER.gen(7, 16, 0)
-  local er_table2 = ER.gen(9, 17, 0)
-  local programs = { 56, 58, 72, 80 }
-  local programs2 = { 83, 84, 87, 92 }
-  local notes = { 60, 62, 67, 71 }
-  local notes2 = { 65, 67, 72, 76 }
-  local bars = 0
-  
-  m8_started = false
-  
   while true do
     clock.sync(state.clock_div)
-    if not m8_started then
-      m8:start()
-      m8_started = true
-    end
     local step = timeline:advance()
-    local note = step % 4 ~= 0 and step % 4 or 4
-    
-    if step == 16 then
-      bars = bars + 1
+    state.step = step
+    for i = 1, #instruments do
+      instruments[i]:next(step)
     end
-    if bars % 4 == 0 then
-      current_notes = notes2
+    if state.mode == HOME then
+      redraw()
     end
-    if bars % 8 == 0 then
-      current_notes = notes
-    end
-    
-    midihub_1:note_on(current_notes[note], 64, 2)
-    
-    if step % 4 == 0 then
-      midihub_a:program_change(programs[math.random(1, 4)], 1)
-      midihub_a:program_change(programs2[math.random(1, 4)], 3)
-    end
-    
-    if er_table[step] then
-      midihub_a:note_on(current_notes[math.random(1, 4)], 64, 1)
-    end
-    
-    if er_table2[step] then
-      midihub_a:note_on(current_notes[math.random(1, 4)], 64, 3)
+    -- if instruments[state.instrument].device ~= nil then
+    --   instruments[state.instrument].device:note_on(60, 64, 2)
+    -- end
+  end
+end
+
+function redraw()
+  -- print(state.mode)
+  view:redraw(state.mode, state, instruments)
+end
+
+function enc(n, d)
+  if n == 2 and state.mode == HOME then
+    state.instrument = util.clamp(state.instrument + d, 1, 4)
+  end
+  if n == 3 and state.mode == HOME then
+    state.home_index = util.clamp(state.home_index + d, 1, 10)
+    if state.home_index == 1 then
+      state.instrument_select = true
+      state.scene_select = false
+      state.selected_slot = 0
+    elseif state.home_index == 2 then
+      state.scene_select = true
+      state.instrument_select = false
+      state.selected_slot = 0
+    else
+      state.instrument_select = false
+      state.scene_select = false
+      state.selected_slot = state.home_index - 2
     end
   end
+  
+  if n == 2 and state.mode == EDIT_DEVICE then
+    state.selected_device = util.clamp(state.selected_device + d, 1, state.attached_device_count)
+  end
+ 
+  if n == 2 and state.mode == EDIT_EVENTS then
+    if state.selected_event < 9 then
+      state.selected_event = state.selected_event + 8
+    else
+      state.selected_event = state.selected_event - 8
+    end
+  end
+  if n == 3 and state.mode == EDIT_EVENTS then
+    state.selected_event = util.clamp(state.selected_event + d, 1, 16)
+  
+    --[[
+    local inst_num = state.instrument
+    local inst = instruments[state.instrument]
+    local scene = inst.scenes[inst.scene]
+    
+    local message = string.format('inst:%d scene:%s', inst_num, inst.scenes[inst.scene].name)
+    local slot = 0
+    
+    if state.selected_slot ~= 0 then
+      slot = scene.slots[state.selected_slot]
+      message = message .. string.format(' slot:%d', state.selected_slot)
+      local event = slot.events[state.selected_event]
+      if event.name == nil then
+        event = 'none'
+      else
+        event = event.name
+      end
+      message = message .. string.format(' event:%d name:%s', state.selected_event, event)
+    end
+    print(message)
+    ]]
+  end
+  redraw()
+end
+
+function key(n, z)
+  if n == 3 and z == 1 and state.mode == HOME and state.selected_slot < 1 then
+    if state.device_select then
+      state.mode = EDIT_DEVICE
+    end
+  elseif n == 3 and z == 1 and state.mode == EDIT_DEVICE then
+    -- error check this
+    instruments[state.instrument]:assign_device(midi.connect(state.attached_devices[state.selected_device].port))
+    state.mode = HOME
+  elseif n == 3 and z == 1 and state.selected_slot > 0 and state.mode == HOME then
+    state.mode = EDIT_EVENTS
+  elseif n == 3 and z == 1 and state.mode == EDIT_EVENTS then
+    instruments[state.instrument]:add_event(state, events[1])
+  elseif n == 2 and z == 1 and state.mode == EDIT_DEVICE then
+    state.mode = HOME
+  elseif n == 2 and z == 1 and state.mode == EDIT_EVENTS then
+    state.mode = HOME
+  end
+  redraw()
 end
